@@ -1,17 +1,16 @@
 package com.cost2cost.printbridge;
 
+import android.app.Activity;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
 import android.widget.Toast;
 
-import androidx.appcompat.app.AppCompatActivity;
-
 import org.json.JSONObject;
 
 import java.net.URLDecoder;
 
-public class BridgeIntentReceiverActivity extends AppCompatActivity {
+public class BridgeIntentReceiverActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -21,7 +20,6 @@ public class BridgeIntentReceiverActivity extends AppCompatActivity {
 
     private void handleIntent(Intent intent) {
         if (intent == null || intent.getData() == null) {
-            Toast.makeText(this, "No data received", Toast.LENGTH_SHORT).show();
             return;
         }
 
@@ -32,19 +30,27 @@ public class BridgeIntentReceiverActivity extends AppCompatActivity {
         }
 
         if (payload == null || payload.trim().isEmpty()) {
-            Toast.makeText(this, "Empty payload received", Toast.LENGTH_LONG).show();
             return;
         }
 
-        try {
-            String decoded = URLDecoder.decode(payload, "UTF-8");
-            JSONObject json = new JSONObject(decoded);
-            PrinterSettings settings = PrinterSettings.get(this);
-            PrinterConnection.PrintResult result = PrinterConnection.printJsonReceipt(this, settings, json);
-            Toast.makeText(this, result.success ? "PRINT SUCCESS" : "PRINT FAILED: " + result.error,
-                    Toast.LENGTH_LONG).show();
-        } catch (Exception e) {
-            Toast.makeText(this, "Invalid print request payload", Toast.LENGTH_LONG).show();
-        }
+        final String rawPayload = payload;
+        final PrinterSettings settings = PrinterSettings.get(getApplicationContext());
+
+        new Thread(() -> {
+            try {
+                JSONObject json;
+                try {
+                    json = new JSONObject(rawPayload);
+                } catch (Exception e) {
+                    String decoded = URLDecoder.decode(rawPayload, "UTF-8");
+                    json = new JSONObject(decoded);
+                }
+                PrinterConnection.PrintResult result = PrinterConnection.printJsonReceipt(getApplicationContext(), settings, json);
+                String msg = result.success ? "PRINT SUCCESS" : "PRINT FAILED: " + result.error;
+                runOnUiThread(() -> Toast.makeText(getApplicationContext(), msg, Toast.LENGTH_SHORT).show());
+            } catch (Exception e) {
+                runOnUiThread(() -> Toast.makeText(getApplicationContext(), "Invalid print request payload", Toast.LENGTH_SHORT).show());
+            }
+        }).start();
     }
 }

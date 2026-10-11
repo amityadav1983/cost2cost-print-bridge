@@ -60,6 +60,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         loadSettings();
         refreshUsbPrinterList();
         updateConnectionTypeVisibility();
+        PrintBridgeService.startService(this);
         updateStatusPanel();
     }
 

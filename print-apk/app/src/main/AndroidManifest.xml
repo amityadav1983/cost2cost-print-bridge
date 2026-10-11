@@ -31,7 +31,13 @@
 
         <activity
             android:name=".BridgeIntentReceiverActivity"
-            android:exported="true">
+            android:exported="true"
+            android:theme="@android:style/Theme.NoDisplay"
+            android:taskAffinity="com.cost2cost.printbridge.receiver"
+            android:launchMode="singleInstance"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:stateNotNeeded="true">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
