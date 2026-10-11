@@ -1,0 +1,15 @@
+<resources>
+    <string name="app_name">Cost2Cost Print Bridge</string>
+    <string name="default_printer_name">Rugtek</string>
+    <string name="default_printer_ip">192.168.1.87</string>
+    <string name="default_printer_port">9100</string>
+    <string name="default_bridge_port">8765</string>
+    <string name="default_paper_width">80mm</string>
+    <string name="default_encoding">UTF-8</string>
+    <string name="default_timeout_ms">5000</string>
+    <string name="status_connected">Connected</string>
+    <string name="status_disconnected">Disconnected</string>
+    <string name="status_running">Running</string>
+    <string name="status_stopped">Stopped</string>
+    <string name="last_print_default">No print yet</string>
+</resources>

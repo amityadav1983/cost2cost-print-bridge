@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+
+set -e
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_HOME="$DIR"
+CLASSPATH="$APP_HOME/gradle/wrapper/gradle-wrapper.jar:$APP_HOME/gradle/wrapper/gradle-wrapper-shared.jar"
+
+if [ ! -f "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" ] || [ ! -f "$APP_HOME/gradle/wrapper/gradle-wrapper-shared.jar" ]; then
+  echo "Missing Gradle wrapper jar(s) under $APP_HOME/gradle/wrapper" >&2
+  echo "Run the Gradle wrapper task from a machine with Gradle installed or restore the wrapper JAR before building." >&2
+  exit 1
+fi
+
+if [ -z "$JAVA_HOME" ]; then
+  JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$(which java 2>/dev/null || echo /usr/bin/java)")")")"
+fi
+
+if [ -z "$JAVA_HOME" ] || [ ! -x "$JAVA_HOME/bin/java" ]; then
+  echo "JAVA_HOME is not set or is invalid. Set JAVA_HOME to a JDK 17+ installation." >&2
+  exit 1
+fi
+
+exec "$JAVA_HOME/bin/java" -classpath "$CLASSPATH" org.gradle.wrapper.GradleWrapperMain "$@"

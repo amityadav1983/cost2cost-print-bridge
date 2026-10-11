@@ -1,0 +1,277 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true"
+    android:padding="16dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:text="COST2COST"
+            android:textSize="26sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:gravity="center"
+            android:text="PRINT BRIDGE"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Connection Type" />
+
+        <Spinner
+            android:id="@+id/connectionTypeSpinner"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Printer Name" />
+
+        <EditText
+            android:id="@+id/printerNameInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Rugtek" />
+
+        <LinearLayout
+            android:id="@+id/ethernetSection"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Printer IP Address" />
+
+            <EditText
+                android:id="@+id/printerIpInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="192.168.1.87" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Printer TCP Port" />
+
+            <EditText
+                android:id="@+id/printerPortInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="9100"
+                android:inputType="number" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/usbSection"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="USB Printer" />
+
+            <Spinner
+                android:id="@+id/usbPrinterSpinner"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content" />
+
+            <TextView
+                android:id="@+id/usbStatusText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="USB Printer: Not connected" />
+
+            <TextView
+                android:id="@+id/usbPrinterInfoText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Connect an ESC/POS USB printer." />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:weightSum="2">
+
+                <Button
+                    android:id="@+id/refreshUsbButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="REFRESH USB" />
+
+                <Button
+                    android:id="@+id/usbTestPrintButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="USB TEST" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Paper Width" />
+
+        <Spinner
+            android:id="@+id/paperWidthSpinner"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Character Encoding" />
+
+        <Spinner
+            android:id="@+id/encodingSpinner"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Connection Timeout (ms)" />
+
+        <EditText
+            android:id="@+id/timeoutInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="5000"
+            android:inputType="number" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Print Bridge HTTP Port" />
+
+        <EditText
+            android:id="@+id/bridgePortInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="8765"
+            android:inputType="number" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="API Token" />
+
+        <EditText
+            android:id="@+id/apiTokenInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Optional token" />
+
+        <CheckBox
+            android:id="@+id/allowLanCheckbox"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Allow LAN printing API" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:weightSum="2">
+
+            <Button
+                android:id="@+id/saveSettingsButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="SAVE SETTINGS" />
+
+            <Button
+                android:id="@+id/testPrintButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="TEST PRINT" />
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:weightSum="3">
+
+            <Button
+                android:id="@+id/startServerButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="START SERVER" />
+
+            <Button
+                android:id="@+id/stopServerButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="STOP SERVER" />
+
+            <Button
+                android:id="@+id/clearLogButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="CLEAR LOG" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Status:" />
+
+        <TextView
+            android:id="@+id/printerStatusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Printer: Disconnected" />
+
+        <TextView
+            android:id="@+id/serverStatusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Print Server: Stopped" />
+
+        <TextView
+            android:id="@+id/lastPrintText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Last Print: No print yet" />
+
+        <TextView
+            android:id="@+id/logTextView"
+            android:layout_width="match_parent"
+            android:layout_height="180dp"
+            android:layout_marginTop="12dp"
+            android:background="#e5e7eb"
+            android:padding="8dp"
+            android:text="Bridge ready."
+            android:textSize="14sp" />
+    </LinearLayout>
+</ScrollView>
