@@ -37,11 +37,12 @@ public final class WindowsPrintBridge {
     private final Path spoolerScript;
     private final String printerIp;
     private final int printerPort;
+    private final int paperWidthMm;
     private final int timeoutMs;
     private final Charset charset;
     private final String token;
 
-    private WindowsPrintBridge(Map<String, String> options) throws IOException {
+    WindowsPrintBridge(Map<String, String> options) throws IOException {
         bindHost = options.getOrDefault("host", "127.0.0.1");
         bridgePort = parseInt(options, "bridge-port", 8765, 1, 65535);
         connectionType = options.getOrDefault("connection", "ethernet").toLowerCase(Locale.ROOT);
@@ -64,6 +65,10 @@ public final class WindowsPrintBridge {
         }
         printerIp = options.getOrDefault("printer-ip", "192.168.1.87");
         printerPort = parseInt(options, "printer-port", 9100, 1, 65535);
+        paperWidthMm = parseInt(options, "paper-width", 80, 58, 80);
+        if (paperWidthMm != 58 && paperWidthMm != 80) {
+            throw new IllegalArgumentException("--paper-width must be 58 or 80");
+        }
         timeoutMs = parseInt(options, "timeout", 5000, 1, 120000);
         token = options.getOrDefault("token", "");
         if (!InetAddress.getByName(bindHost).isLoopbackAddress() && token.isEmpty()) {
@@ -98,6 +103,13 @@ public final class WindowsPrintBridge {
 
         if ("OPTIONS".equalsIgnoreCase(method)) {
             send(exchange, 200, "");
+        } else if ("GET".equalsIgnoreCase(method) && "/preview".equals(path)) {
+            exchange.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
+            exchange.getResponseHeaders().set("Cache-Control", "no-store");
+            exchange.getResponseHeaders().set("Content-Security-Policy",
+                    "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
+                            + "connect-src 'self'; frame-src 'self'");
+            send(exchange, 200, previewPage());
         } else if ("GET".equalsIgnoreCase(method) && "/status".equals(path)) {
             send(exchange, 200, "{\"bridgeRunning\":true,\"printerConfigured\":"
                     + ("usb".equals(connectionType) ? !printerName.isBlank() : !printerIp.isBlank() && printerPort > 0)
@@ -106,10 +118,46 @@ public final class WindowsPrintBridge {
                     + ",\"printerIp\":" + quote(printerIp)
                     + ",\"printerPort\":" + printerPort
                     + ",\"printerReachable\":" + isPrinterReachable() + "}");
+        } else if ("POST".equalsIgnoreCase(method) && "/preview".equals(path)) {
+            handlePreview(exchange);
         } else if ("POST".equalsIgnoreCase(method) && "/print".equals(path)) {
             handlePrint(exchange);
         } else {
             send(exchange, 404, "{\"success\":false,\"message\":\"Not found\"}");
+        }
+    }
+
+    private void handlePreview(HttpExchange exchange) throws IOException {
+        if (!token.isEmpty() && !("Bearer " + token).equals(exchange.getRequestHeaders().getFirst("Authorization"))) {
+            send(exchange, 401, errorJson("Unauthorized", "A valid bearer token is required"));
+            return;
+        }
+
+        try {
+            byte[] body = readLimited(exchange.getRequestBody());
+            if (body.length == 0) {
+                send(exchange, 400, errorJson("Invalid preview request", "Empty request body"));
+                return;
+            }
+
+            Object parsed = new JsonParser(new String(body, StandardCharsets.UTF_8)).parse();
+            if (!(parsed instanceof Map)) {
+                send(exchange, 400, errorJson("Invalid preview request", "Expected a JSON object"));
+                return;
+            }
+            Object contentValue = ((Map<?, ?>) parsed).get("content");
+            if (!(contentValue instanceof List) || ((List<?>) contentValue).isEmpty()) {
+                send(exchange, 400, errorJson("Preview unavailable", "Missing content array"));
+                return;
+            }
+
+            buildReceipt((List<?>) contentValue);
+            String html = buildPreviewHtml((List<?>) contentValue, paperWidthMm);
+            send(exchange, 200, "{\"success\":true,\"previewHtml\":" + quote(html) + "}");
+        } catch (IllegalArgumentException e) {
+            send(exchange, 400, errorJson("Invalid preview request", e.getMessage()));
+        } catch (RequestTooLargeException e) {
+            send(exchange, 413, errorJson("Request too large", e.getMessage()));
         }
     }
 
@@ -223,7 +271,7 @@ public final class WindowsPrintBridge {
         }
     }
 
-    private byte[] buildReceipt(List<?> content) {
+    byte[] buildReceipt(List<?> content) {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         write(output, new byte[] { ESC, '@', ESC, 'x', 1, ESC, 'r', 0 });
 
@@ -242,16 +290,19 @@ public final class WindowsPrintBridge {
                             booleanValue(item.get("underline"), false));
                     break;
                 case "line":
-                    write(output, new byte[] { ESC, 'd', 3 });
+                case "separator":
+                    writeSeparator(output);
                     break;
                 case "item":
-                    String name = stringValue(item.get("name"), "");
-                    int qty = intValue(item.get("qty"), 1);
-                    double price = doubleValue(item.get("price"), 0);
-                    double total = doubleValue(item.get("total"), 0);
-                    writeText(output, name + (qty > 0 ? " x" + qty : ""), "left", false, 1, false);
-                    writeText(output, String.format(Locale.US, "%.2f  %.2f", price, total),
-                            "right", false, 1, false);
+                    writeItem(output, item);
+                    break;
+                case "order":
+                case "header":
+                    writeOrderHeader(output, item);
+                    break;
+                case "subtotal":
+                case "total":
+                    writeSummary(output, item, "total".equals(type));
                     break;
                 case "feed":
                     int lines = Math.max(1, Math.min(100, intValue(item.get("lines"), 1)));
@@ -266,10 +317,242 @@ public final class WindowsPrintBridge {
                     throw new IllegalArgumentException("Unsupported print command: " + type);
             }
         }
-        for (int i = 0; i < 3; i++) {
-            write(output, new byte[] { ESC, 'J', 0x18 });
-        }
         return output.toByteArray();
+    }
+
+    static String buildPreviewHtml(List<?> content, int paperWidthMm) {
+        StringBuilder html = new StringBuilder("<!doctype html><html><head><meta charset=\"utf-8\">"
+                + "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; "
+                + "style-src 'unsafe-inline'; img-src data:\"><style>"
+                + "*{box-sizing:border-box}html,body{margin:0;background:#e8e8e8;color:#111;"
+                + "font:12px/1.2 Arial,sans-serif}.receipt{width:" + paperWidthMm
+                + "mm;margin:12px auto;padding:3mm;background:#fff;box-shadow:0 2px 12px #0003;"
+                + "overflow-wrap:anywhere}.row{white-space:pre-wrap;min-height:1.15em}"
+                + ".center{text-align:center}.right{text-align:right}.bold{font-weight:bold}"
+                + ".small{font-size:9px;line-height:1.05}.large{font-size:1.25em;line-height:1.15}"
+                + ".larger{font-size:1.4em;line-height:1.15}.separator{border-top:1px dashed #666;margin:2px 0}"
+                + ".columns{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:baseline}"
+                + ".left{overflow-wrap:anywhere}.amount{text-align:right;white-space:nowrap;font-weight:bold}"
+                + ".details{font-size:11px;line-height:1.15}.mrp{font-size:9px;line-height:1.05}"
+                + ".feed{height:2mm}.cut{border-top:1px dashed #888;margin:2mm 0}"
+                + "@media print{html,body{background:#fff}.receipt{margin:0;box-shadow:none;width:"
+                + paperWidthMm + "mm}}"
+                + "</style></head><body><main class=\"receipt\">");
+        for (Object value : content) {
+            Map<?, ?> item = (Map<?, ?>) value;
+            String type = stringValue(item.get("type"), "text").toLowerCase(Locale.ROOT);
+            switch (type) {
+                case "text":
+                    appendPreviewText(html, stringValue(item.get("text"), ""),
+                            stringValue(item.get("align"), "left"),
+                            booleanValue(item.get("bold"), false), intValue(item.get("size"), 1));
+                    break;
+                case "line":
+                case "separator":
+                    html.append("<div class=\"separator\" aria-label=\"section separator\"></div>");
+                    break;
+                case "order":
+                case "header":
+                    appendPreviewOrderHeader(html, item);
+                    break;
+                case "subtotal":
+                case "total":
+                    appendPreviewSummary(html, item, "total".equals(type));
+                    break;
+                case "item":
+                    appendPreviewItem(html, item);
+                    break;
+                case "feed":
+                    int lines = Math.max(1, Math.min(100, intValue(item.get("lines"), 1)));
+                    for (int i = 0; i < lines; i++) {
+                        html.append("<div class=\"feed\" aria-hidden=\"true\"></div>");
+                    }
+                    break;
+                case "cut":
+                    html.append("<div class=\"cut\" aria-label=\"cut command\"></div>");
+                    break;
+                default:
+                    throw new IllegalArgumentException("Unsupported print command: " + type);
+            }
+        }
+        for (int i = 0; i < 3; i++) {
+            html.append("<div class=\"feed\" aria-hidden=\"true\"></div>");
+        }
+        return html.append("</main></body></html>").toString();
+    }
+
+    private void writeItem(ByteArrayOutputStream output, Map<?, ?> item) {
+        String name = stringValue(item.get("name"), "");
+        int qty = intValue(item.get("qty"), 1);
+        double unitPrice = doubleValue(item.get("price"), 0);
+        double amount = doubleValue(item.get("total"), doubleValue(item.get("amount"), 0));
+        writeText(output, name, "left", false, 1, false);
+        writeColumns(output, (qty > 0 ? qty + " x " : "") + money(unitPrice), money(amount), false);
+        if (item.get("mrp") instanceof Number || item.get("mrp") instanceof String) {
+            write(output, new byte[] { ESC, 'M', 1 });
+            writeText(output, "(MRP " + money(doubleValue(item.get("mrp"), 0)) + ")",
+                    "right", false, 1, false);
+            write(output, new byte[] { ESC, 'M', 0 });
+        }
+        if (item.get("savings") instanceof Number || item.get("savings") instanceof String) {
+            write(output, new byte[] { ESC, 'M', 1 });
+            writeText(output, "(Saved " + money(doubleValue(item.get("savings"), 0)) + ")",
+                    "right", false, 1, false);
+            write(output, new byte[] { ESC, 'M', 0 });
+        } else if (item.get("offer") instanceof Number || item.get("offer") instanceof String) {
+            write(output, new byte[] { ESC, 'M', 1 });
+            writeText(output, "(Offer " + money(doubleValue(item.get("offer"), 0)) + ")",
+                    "right", false, 1, false);
+            write(output, new byte[] { ESC, 'M', 0 });
+        }
+    }
+
+    private void writeOrderHeader(ByteArrayOutputStream output, Map<?, ?> item) {
+        String title = stringValue(item.get("title"), "ORDER RECEIPT");
+        writeText(output, title, "center", true, 1, false);
+        Object orderNo = item.containsKey("orderNo") ? item.get("orderNo") : item.get("orderId");
+        if (orderNo != null) {
+            writeText(output, "Order #" + orderNo, "right", true, 1, false);
+        }
+        Object time = item.containsKey("time") ? item.get("time") : item.get("createdAt");
+        if (time != null) {
+            writeText(output, stringValue(time, ""), "right", false, 1, false);
+        }
+        writeSeparator(output);
+    }
+
+    private void writeSummary(ByteArrayOutputStream output, Map<?, ?> item, boolean emphasize) {
+        String label = stringValue(item.get("label"), emphasize ? "Total" : "Subtotal");
+        double amount = doubleValue(item.get("amount"), doubleValue(item.get("total"), 0));
+        writeColumns(output, label, money(amount), emphasize);
+    }
+
+    private void writeColumns(ByteArrayOutputStream output, String left, String right, boolean bold) {
+        int columns = paperWidthMm == 58 ? 32 : 48;
+        if (right.length() >= columns) {
+            right = right.substring(right.length() - columns + 1);
+        }
+        int leftWidth = Math.max(0, columns - right.length());
+        if (left.length() > leftWidth) {
+            left = left.substring(0, leftWidth);
+        }
+        writeText(output, left + " ".repeat(Math.max(1, columns - left.length() - right.length())) + right,
+                "left", bold, 1, false);
+    }
+
+    private void writeSeparator(ByteArrayOutputStream output) {
+        writeText(output, "-".repeat(paperWidthMm == 58 ? 32 : 48), "left", false, 1, false);
+    }
+
+    private static String money(double value) {
+        return String.format(Locale.US, "%.2f", value);
+    }
+
+    private static void appendPreviewOrderHeader(StringBuilder html, Map<?, ?> item) {
+        appendPreviewText(html, stringValue(item.get("title"), "ORDER RECEIPT"), "center", true, 1);
+        Object orderNo = item.containsKey("orderNo") ? item.get("orderNo") : item.get("orderId");
+        if (orderNo != null) {
+            appendPreviewText(html, "Order #" + orderNo, "right", true, 1);
+        }
+        Object time = item.containsKey("time") ? item.get("time") : item.get("createdAt");
+        if (time != null) {
+            appendPreviewText(html, stringValue(time, ""), "right", false, 1);
+        }
+        html.append("<div class=\"separator\" aria-label=\"section separator\"></div>");
+    }
+
+    private static void appendPreviewItem(StringBuilder html, Map<?, ?> item) {
+        appendPreviewText(html, stringValue(item.get("name"), ""), "left", false, 1);
+        int qty = intValue(item.get("qty"), 1);
+        double unitPrice = doubleValue(item.get("price"), 0);
+        double amount = doubleValue(item.get("total"), doubleValue(item.get("amount"), 0));
+        html.append("<div class=\"columns details\"><span class=\"left\">")
+                .append(escapeHtml((qty > 0 ? qty + " x " : "") + money(unitPrice)))
+                .append("</span><span class=\"amount\">").append(escapeHtml(money(amount)))
+                .append("</span></div>");
+        if (item.get("mrp") instanceof Number || item.get("mrp") instanceof String) {
+            html.append("<div class=\"row right small\">(MRP ")
+                    .append(escapeHtml(money(doubleValue(item.get("mrp"), 0)))).append(")</div>");
+        }
+        if (item.get("savings") instanceof Number || item.get("savings") instanceof String) {
+            html.append("<div class=\"row right small\">(Saved ")
+                    .append(escapeHtml(money(doubleValue(item.get("savings"), 0)))).append(")</div>");
+        } else if (item.get("offer") instanceof Number || item.get("offer") instanceof String) {
+            html.append("<div class=\"row right small\">(Offer ")
+                    .append(escapeHtml(money(doubleValue(item.get("offer"), 0)))).append(")</div>");
+        }
+    }
+
+    private static void appendPreviewSummary(StringBuilder html, Map<?, ?> item, boolean emphasize) {
+        String label = stringValue(item.get("label"), emphasize ? "Total" : "Subtotal");
+        double amount = doubleValue(item.get("amount"), doubleValue(item.get("total"), 0));
+        html.append("<div class=\"columns")
+                .append(emphasize ? " bold" : "")
+                .append("\"><span class=\"left\">").append(escapeHtml(label))
+                .append("</span><span class=\"amount\">").append(escapeHtml(money(amount)))
+                .append("</span></div>");
+    }
+    private static void appendPreviewText(StringBuilder html, String text, String align, boolean bold, int size) {
+        if (text.isEmpty()) {
+            return;
+        }
+        String alignment = "center".equalsIgnoreCase(align) ? "center"
+                : "right".equalsIgnoreCase(align) ? "right" : "left";
+        String sizeClass = size == 2 ? " large" : size >= 3 ? " larger" : "";
+        html.append("<div class=\"row ").append(alignment);
+        if (bold) {
+            html.append(" bold");
+        }
+        html.append(sizeClass).append("\">").append(escapeHtml(text)).append("</div>");
+    }
+
+    private static String escapeHtml(String text) {
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                .replace("\"", "&quot;").replace("'", "&#39;");
+    }
+
+    private static String previewPage() {
+        return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+                + "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+                + "<title>Cost2Cost Print Preview</title><style>"
+                + "*{box-sizing:border-box}body{margin:0;background:#f2f4f7;color:#182230;"
+                + "font:14px/1.5 system-ui,sans-serif}.layout{max-width:1100px;margin:32px auto;padding:0 20px}"
+                + "h1{font-size:24px;margin:0 0 8px}.note{background:#fff8db;border:1px solid #f1d978;"
+                + "border-radius:8px;padding:12px 16px;margin:16px 0}main{display:grid;"
+                + "grid-template-columns:minmax(320px,1fr) minmax(280px,420px);gap:20px}"
+                + "textarea{width:100%;height:430px;padding:12px;border:1px solid #bac4d0;"
+                + "border-radius:8px;font:12px/1.45 Consolas,monospace}button{padding:10px 16px;"
+                + "border:0;border-radius:6px;background:#1459c7;color:white;font-weight:600;cursor:pointer}"
+                + "#status{min-height:24px;margin:8px 0}iframe{width:100%;height:580px;border:1px solid #ccd3dc;"
+                + "background:#e8e8e8;border-radius:8px}@media(max-width:760px){.layout{margin:16px auto}"
+                + "main{grid-template-columns:1fr}textarea{height:280px}}</style></head><body>"
+                + "<div class=\"layout\"><h1>Cost2Cost Print Preview</h1>"
+                + "<div class=\"note\"><strong>Preview only:</strong> this page does not send anything to a printer. "
+                + "It simulates the bridge's text-command layout; font rendering and paper feed may differ on the device. "
+                + "For a faithful visual check, use a frontend-rendered raster payload.</div><main><section>"
+                + "<label for=\"payload\">Paste the same JSON receipt payload you would send to <code>/print</code>.</label>"
+                + "<p><textarea id=\"payload\" spellcheck=\"false\">{&quot;content&quot;:["
+                + "{&quot;type&quot;:&quot;order&quot;,&quot;orderNo&quot;:&quot;CC-1042&quot;,&quot;time&quot;:&quot;30 Oct 2026 10:15 AM&quot;},"
+                + "{&quot;type&quot;:&quot;item&quot;,&quot;name&quot;:&quot;Product A - long product description&quot;,&quot;qty&quot;:2,&quot;price&quot;:100,&quot;total&quot;:200,&quot;mrp&quot;:250,&quot;savings&quot;:50},"
+                + "{&quot;type&quot;:&quot;item&quot;,&quot;name&quot;:&quot;Product B&quot;,&quot;qty&quot;:1,&quot;price&quot;:75,&quot;total&quot;:75,&quot;mrp&quot;:90},"
+                + "{&quot;type&quot;:&quot;separator&quot;},"
+                + "{&quot;type&quot;:&quot;subtotal&quot;,&quot;amount&quot;:275},"
+                + "{&quot;type&quot;:&quot;total&quot;,&quot;amount&quot;:275}]}</textarea></p>"
+                + "<label>Bearer token (only if configured): <input id=\"token\" type=\"password\" autocomplete=\"off\"></label>"
+                + "<p><button id=\"preview\" type=\"button\">Show preview (no printing)</button></p>"
+                + "<div id=\"status\" role=\"status\" aria-live=\"polite\"></div></section>"
+                + "<iframe id=\"receipt\" title=\"Simulated receipt preview\" sandbox=\"\"></iframe>"
+                + "</main></div><script>"
+                + "const button=document.getElementById('preview'),status=document.getElementById('status');"
+                + "button.addEventListener('click',async()=>{status.textContent='Rendering preview…';"
+                + "try{const payload=JSON.parse(document.getElementById('payload').value);"
+                + "const headers={'Content-Type':'application/json'};const token=document.getElementById('token').value;"
+                + "if(token)headers.Authorization='Bearer '+token;"
+                + "const response=await fetch('/preview',{method:'POST',headers,body:JSON.stringify(payload)});"
+                + "const result=await response.json();if(!response.ok||!result.success)throw new Error(result.error||result.message||'Preview failed');"
+                + "document.getElementById('receipt').srcdoc=result.previewHtml;"
+                + "status.textContent='Preview only — no printer job was sent.';"
+                + "}catch(error){status.textContent=error.message;}});</script></body></html>";
     }
 
     private void writeText(ByteArrayOutputStream output, String text, String align,
@@ -441,6 +724,8 @@ public final class WindowsPrintBridge {
     }
 
     private static final class RequestTooLargeException extends IOException {
+        private static final long serialVersionUID = 1L;
+
         RequestTooLargeException(String message) {
             super(message);
         }

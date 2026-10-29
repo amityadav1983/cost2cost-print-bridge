@@ -10,6 +10,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 
 public class EscPosPrinter {
     private static final byte ESC = 0x1B;
@@ -83,7 +84,7 @@ public class EscPosPrinter {
     }
 
     public void lineSeparator() {
-        write(new byte[] { ESC, 'd', 3 });
+        writeText(repeat('-', getCharacterWidth()), "left", false, 1, false);
     }
 
     public void feed(int lines) {
@@ -97,13 +98,47 @@ public class EscPosPrinter {
     }
 
     public void printItem(String name, int qty, double price, double total) {
-        StringBuilder itemLine = new StringBuilder();
-        itemLine.append(name);
-        if (qty > 0) {
-            itemLine.append(" x").append(qty);
+        printItem(name, qty, price, total, null, null);
+    }
+
+    private void printItem(String name, int qty, double price, double total, Double mrp, Double savings) {
+        writeText(name, "left", false, 1, false);
+        writeColumns((qty > 0 ? qty + " x " : "") + formatAmount(price), formatAmount(total), false);
+        if (mrp != null) {
+            write(new byte[] { ESC, 'M', 1 });
+            writeText("(MRP " + formatAmount(mrp) + ")", "right", false, 1, false);
+            write(new byte[] { ESC, 'M', 0 });
         }
-        writeText(itemLine.toString(), "left", false, 1, false);
-        writeText(String.format("%s  %s", formatAmount(price), formatAmount(total)), "right", false, 1, false);
+        if (savings != null) {
+            write(new byte[] { ESC, 'M', 1 });
+            writeText("(Saved " + formatAmount(savings) + ")", "right", false, 1, false);
+            write(new byte[] { ESC, 'M', 0 });
+        }
+    }
+
+    private int getCharacterWidth() {
+        return paperWidthMm <= 58 ? 32 : 48;
+    }
+
+    private void writeColumns(String left, String right, boolean bold) {
+        int width = getCharacterWidth();
+        if (right.length() >= width) {
+            right = right.substring(right.length() - width + 1);
+        }
+        int leftWidth = Math.max(0, width - right.length());
+        if (left.length() > leftWidth) {
+            left = left.substring(0, leftWidth);
+        }
+        int spaces = Math.max(1, width - left.length() - right.length());
+        writeText(left + repeat(' ', spaces) + right, "left", bold, 1, false);
+    }
+
+    private String repeat(char character, int count) {
+        StringBuilder value = new StringBuilder(count);
+        for (int i = 0; i < count; i++) {
+            value.append(character);
+        }
+        return value.toString();
     }
 
     public byte[] buildReceipt(JSONArray content) throws JSONException {
@@ -121,14 +156,25 @@ public class EscPosPrinter {
                 int size = item.optInt("size", 1);
                 boolean underline = item.optBoolean("underline", false);
                 writeText(text, align, bold, size, underline);
-            } else if ("line".equalsIgnoreCase(type)) {
+            } else if ("line".equalsIgnoreCase(type) || "separator".equalsIgnoreCase(type)) {
                 lineSeparator();
             } else if ("item".equalsIgnoreCase(type)) {
                 String name = item.optString("name", "");
                 int qty = item.optInt("qty", 1);
                 double price = item.optDouble("price", 0d);
-                double total = item.optDouble("total", 0d);
-                printItem(name, qty, price, total);
+                double total = item.has("total") ? item.optDouble("total", 0d) : item.optDouble("amount", 0d);
+                Double mrp = item.has("mrp") ? item.optDouble("mrp") : null;
+                Double savings = item.has("savings") ? item.optDouble("savings")
+                        : item.has("offer") ? item.optDouble("offer") : null;
+                printItem(name, qty, price, total, mrp, savings);
+            } else if ("order".equalsIgnoreCase(type) || "header".equalsIgnoreCase(type)) {
+                writeOrderHeader(item);
+            } else if ("subtotal".equalsIgnoreCase(type) || "total".equalsIgnoreCase(type)) {
+                String label = item.optString("label",
+                        "total".equalsIgnoreCase(type) ? "Total" : "Subtotal");
+                double amount = item.has("amount")
+                        ? item.optDouble("amount", 0d) : item.optDouble("total", 0d);
+                writeColumns(label, formatAmount(amount), "total".equalsIgnoreCase(type));
             } else if ("feed".equalsIgnoreCase(type)) {
                 feed(item.optInt("lines", 1));
             } else if ("cut".equalsIgnoreCase(type)) {
@@ -138,8 +184,20 @@ public class EscPosPrinter {
             }
         }
 
-        feed(3);
         return output.toByteArray();
+    }
+
+    private void writeOrderHeader(JSONObject item) {
+        writeText(item.optString("title", "ORDER RECEIPT"), "center", true, 1, false);
+        String orderNo = item.has("orderNo") ? item.optString("orderNo") : item.optString("orderId", "");
+        if (!TextUtils.isEmpty(orderNo)) {
+            writeText("Order #" + orderNo, "right", true, 1, false);
+        }
+        String time = item.has("time") ? item.optString("time") : item.optString("createdAt", "");
+        if (!TextUtils.isEmpty(time)) {
+            writeText(time, "right", false, 1, false);
+        }
+        lineSeparator();
     }
 
     public byte[] buildTestPrint(String printerName, String printerIp, int printerPort) {
@@ -197,6 +255,6 @@ public class EscPosPrinter {
     }
 
     private String formatAmount(double value) {
-        return String.format("%.2f", value);
+        return String.format(Locale.US, "%.2f", value);
     }
 }
